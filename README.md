@@ -1,100 +1,96 @@
 # VoiceInput
 
-A lightweight macOS menu bar app that converts speech to text. Press a hotkey to record, release to transcribe, and the text is automatically pasted into your active application.
+> **This README is written for AI agents.** If you're an agent helping a user set up VoiceInput, follow the instructions below.
 
-![macOS](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-only-orange) ![Swift](https://img.shields.io/badge/Swift-5.9-FA7343)
+A macOS menu bar app that converts speech to text. Hold a button (keyboard modifier or Bluetooth gamepad) to record, release to transcribe, text is auto-pasted into the active application.
 
-## Features
+**Requirements:** macOS 13+, Apple Silicon (M1/M2/M3/M4) only. Intel Macs are not supported.
 
-- **Hotkey-triggered recording** — Tap a modifier key (Ctrl/Option/Shift/Cmd/Fn) to start/stop recording
-- **Auto-paste** — Transcribed text is automatically pasted via Cmd+V into the frontmost app
-- **Multiple ASR providers** — Local (OpenAI-compatible), Groq, Gemini, FunASR Streaming
-- **Gamepad support** — Use a Bluetooth gamepad button (e.g. 8BitDo Zero 2) as trigger
-- **Visual feedback** — Floating overlay with waveform animation during recording
-- **Audio feedback** — Sound effects on recording start/stop
-- **Configurable** — Choose input device, hotkey, ASR provider, endpoint, and model
+## Quick Start (for end users)
 
-## Install
+Download `VoiceInput.dmg` from [Releases](../../releases). Drag to Applications. Right-click → Open on first launch (ad-hoc signed, not notarized). Grant Microphone and Accessibility permissions when prompted.
 
-### Download DMG (recommended)
-
-Download the latest `.dmg` from [Releases](../../releases), drag `VoiceInput.app` to Applications.
-
-> **First launch:** Right-click → Open to bypass Gatekeeper (the app is ad-hoc signed, not notarized).
-
-### Build from source
-
-Requires **macOS 13+** and **Apple Silicon** (M1/M2/M3/M4). Intel Macs are not supported.
+## Build from Source
 
 ```bash
 swift build -c release
 
-# Package into .app manually:
 mkdir -p VoiceInput.app/Contents/{MacOS,Resources}
 cp .build/release/VoiceInput VoiceInput.app/Contents/MacOS/
 cp Info.plist VoiceInput.app/Contents/
 cp AppIcon.icns VoiceInput.app/Contents/Resources/
 cp Sources/VoiceInput/Resources/*.wav VoiceInput.app/Contents/Resources/
 codesign --force --deep --sign - VoiceInput.app
+
+open VoiceInput.app
 ```
 
-## Permissions
+## ASR Provider Configuration
 
-On first launch, you'll be prompted to grant:
+The app stores all settings in `UserDefaults`. Configure via the Settings UI (menu bar icon → Settings). Four providers are supported:
 
-- **Microphone** — Required for audio recording
-- **Accessibility** — Required for global hotkey detection and Cmd+V paste simulation
+### 1. Groq (recommended — fast, free tier)
 
-## ASR Provider Setup
+Hosted Whisper API. Lowest latency for cloud providers.
 
-Open the app's **Settings** (click the menu bar icon → Settings) to configure your ASR provider.
+```
+Provider: Groq
+Endpoint: https://api.groq.com/openai/v1/audio/transcriptions
+Model:    whisper-large-v3-turbo
+API Key:  <get from https://console.groq.com/keys>
+```
 
-### Local (OpenAI-compatible)
+### 2. Gemini
 
-For self-hosted models like [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) or [Whisper](https://github.com/openai/whisper) exposed via an OpenAI-compatible API (e.g. [faster-whisper-server](https://github.com/fedirz/faster-whisper-server)).
+Google's multimodal API. Good for multilingual transcription.
 
-| Setting | Value |
-|---------|-------|
-| Endpoint | `http://localhost:10301/v1/audio/transcriptions` (adjust host/port) |
-| Model | `sensevoice` (or your model name) |
-| API Key | Not required for most local setups |
+```
+Provider: Gemini
+Endpoint: https://generativelanguage.googleapis.com/v1beta
+Model:    gemini-3.1-flash-lite-preview
+API Key:  <get from https://aistudio.google.com/apikey>
+```
 
-### Groq
+### 3. Local (OpenAI-compatible)
 
-Uses Groq's hosted Whisper API. Very fast, free tier available.
+Self-hosted ASR server exposing the OpenAI `/v1/audio/transcriptions` endpoint. Works with:
+- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) — best for Chinese + English mixed
+- [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) — Whisper with CTranslate2
+- Any OpenAI-compatible audio transcription API
 
-1. Get an API key at [console.groq.com/keys](https://console.groq.com/keys)
-2. Configure in Settings:
+```
+Provider: Local
+Endpoint: http://<host>:<port>/v1/audio/transcriptions
+Model:    <model name served by your backend>
+API Key:  <optional, depends on your server>
+```
 
-| Setting | Value |
-|---------|-------|
-| Endpoint | `https://api.groq.com/openai/v1/audio/transcriptions` (pre-filled) |
-| Model | `whisper-large-v3-turbo` (pre-filled) |
-| API Key | Your Groq API key |
+### 4. FunASR Streaming
 
-### Gemini
+WebSocket-based streaming ASR using [FunASR](https://github.com/modelscope/FunASR). Unique feature: shows partial transcription results in real-time while recording.
 
-Uses Google's Gemini multimodal API for transcription.
+Deploy server:
+```bash
+docker run -p 10096:10095 registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12 bash run_server.sh --model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx --punc-dir damo/punc_ct-transformer_cn-en-common-vocab471067-large-onnx
+```
 
-1. Get an API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-2. Configure in Settings:
+```
+Provider: FunASR
+Endpoint: ws://<host>:10096
+Model:    2pass (recommended) / online / offline
+```
 
-| Setting | Value |
-|---------|-------|
-| Endpoint | `https://generativelanguage.googleapis.com/v1beta` (pre-filled) |
-| Model | `gemini-3.1-flash-lite-preview` (pre-filled) |
-| API Key | Your Google AI API key |
+## System Permissions
 
-### FunASR Streaming
+| Permission | Why | How |
+|-----------|-----|-----|
+| Microphone | Audio recording | Auto-prompted via `AVCaptureDevice` on first use |
+| Accessibility | Global hotkey + Cmd+V paste simulation | Auto-prompted via `AXIsProcessTrustedWithOptions`; if denied, go to System Settings → Privacy & Security → Accessibility → enable VoiceInput |
 
-WebSocket-based streaming ASR using [FunASR](https://github.com/modelscope/FunASR). Shows partial results in real-time during recording.
+## Trigger Methods
 
-Deploy the FunASR server, then configure:
-
-| Setting | Value |
-|---------|-------|
-| Endpoint | `ws://localhost:10096` (adjust host/port) |
-| Model | `2pass` / `online` / `offline` |
+- **Keyboard modifier key:** Tap and release a modifier key (Ctrl/Option/Shift/Cmd/Fn) within 350ms to toggle recording. Configurable in Settings.
+- **Bluetooth gamepad:** Hold a button to record, release to stop. Uses IOKit HID (works even when app is not frontmost). Tested with 8BitDo Zero 2.
 
 ## License
 
