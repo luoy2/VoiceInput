@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+
+  #container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+
+  #container.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  /* Main pill bar */
+  #pill {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: rgba(30, 30, 30, 0.92);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-radius: 28px;
+    padding: 6px;
+    border: 0.5px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 2px 8px rgba(0, 0, 0, 0.2),
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.05);
+    height: 44px;
+    min-width: 200px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Circle buttons */
+  .btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .btn:hover { transform: scale(1.08); }
+  .btn:active { transform: scale(0.95); }
+
+  #btn-cancel {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  #btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  #btn-cancel svg { width: 14px; height: 14px; }
+
+  #btn-done {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  #btn-done:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  #btn-done svg { width: 16px; height: 16px; }
+
+  /* Waveform area */
+  #waveform-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    padding: 0 12px;
+    min-width: 120px;
+  }
+
+  #waveform {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2.5px;
+    height: 28px;
+  }
+
+  .bar {
+    width: 3px;
+    border-radius: 1.5px;
+    background: #fff;
+    height: 4px;
+    transition: height 0.08s ease;
+    opacity: 0.9;
+  }
+
+  /* Processing spinner */
+  #processing {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-top-color: rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Status text inside pill */
+  #status-text {
+    display: none;
+    padding: 0 12px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+  }
+
+  /* Transcript area below pill */
+  #transcript {
+    margin-top: 8px;
+    background: rgba(30, 30, 30, 0.88);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-radius: 12px;
+    padding: 10px 16px;
+    border: 0.5px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    max-width: 400px;
+    min-width: 200px;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    display: none;
+  }
+
+  #transcript.visible {
+    opacity: 1;
+    transform: translateY(0);
+    display: block;
+  }
+
+  #transcript-text {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+  }
+
+  /* Success state - green accent */
+  .state-success #btn-done {
+    background: #34C759;
+  }
+  .state-success #btn-done svg path {
+    stroke: #fff;
+  }
+
+  /* Error state - red accent */
+  .state-error #status-text {
+    color: #FF6B6B;
+  }
+
+  /* Recording glow */
+  .state-recording #pill {
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 2px 8px rgba(0, 0, 0, 0.2),
+      0 0 20px rgba(255, 59, 48, 0.08),
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.05);
+  }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="pill">
+    <button class="btn" id="btn-cancel" onclick="onCancel()">
+      <svg viewBox="0 0 14 14" fill="none">
+        <path d="M3 3L11 11M11 3L3 11" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <div id="waveform-area">
+      <div id="waveform"></div>
+    </div>
+
+    <div id="processing">
+      <div class="spinner"></div>
+      <span>Transcribing</span>
+    </div>
+
+    <div id="status-text"></div>
+
+    <button class="btn" id="btn-done" onclick="onDone()">
+      <svg viewBox="0 0 16 16" fill="none">
+        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <div id="transcript">
+    <div id="transcript-text"></div>
+  </div>
+</div>
+
+<script>
+  const NUM_BARS = 24;
+  const waveformEl = document.getElementById('waveform');
+  const container = document.getElementById('container');
+  const waveformArea = document.getElementById('waveform-area');
+  const processing = document.getElementById('processing');
+  const statusText = document.getElementById('status-text');
+  const transcript = document.getElementById('transcript');
+  const transcriptText = document.getElementById('transcript-text');
+
+  // Create bars
+  for (let i = 0; i < NUM_BARS; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    waveformEl.appendChild(bar);
+  }
+  const bars = document.querySelectorAll('.bar');
+
+  // Idle wave animation
+  let idleFrame;
+  function idleWave() {
+    const t = Date.now() / 1000;
+    bars.forEach((bar, i) => {
+      const h = 4 + 2 * Math.sin(t * 2 + i * 0.3);
+      bar.style.height = h + 'px';
+      bar.style.opacity = '0.4';
+    });
+    idleFrame = requestAnimationFrame(idleWave);
+  }
+
+  // --- Public API called from Swift ---
+
+  function startRecording() {
+    container.className = 'visible state-recording';
+    waveformArea.style.display = 'flex';
+    processing.style.display = 'none';
+    statusText.style.display = 'none';
+    transcript.className = '';
+    transcript.style.display = 'none';
+    cancelAnimationFrame(idleFrame);
+    idleWave();
+  }
+
+  // Called from Swift with audio levels array (0-1 floats)
+  function updateLevels(levels) {
+    cancelAnimationFrame(idleFrame);
+    if (!Array.isArray(levels)) return;
+    bars.forEach((bar, i) => {
+      const level = levels[i % levels.length] || 0;
+      const h = 4 + level * 24;
+      bar.style.height = h + 'px';
+      bar.style.opacity = (0.5 + level * 0.5).toString();
+    });
+  }
+
+  function showProcessing() {
+    container.className = 'visible state-processing';
+    waveformArea.style.display = 'none';
+    processing.style.display = 'flex';
+    statusText.style.display = 'none';
+    cancelAnimationFrame(idleFrame);
+  }
+
+  function showSuccess(text) {
+    container.className = 'visible state-success';
+    waveformArea.style.display = 'none';
+    processing.style.display = 'none';
+    statusText.style.display = 'block';
+    statusText.textContent = 'Done';
+
+    if (text && text.length > 0) {
+      transcriptText.textContent = text;
+      transcript.style.display = 'block';
+      requestAnimationFrame(() => { transcript.className = 'visible'; });
+    }
+  }
+
+  function showError(message) {
+    container.className = 'visible state-error';
+    waveformArea.style.display = 'none';
+    processing.style.display = 'none';
+    statusText.style.display = 'block';
+    statusText.textContent = message || 'Error';
+  }
+
+  function hideOverlay() {
+    container.className = '';
+    transcript.className = '';
+    cancelAnimationFrame(idleFrame);
+  }
+
+  // Button callbacks → Swift
+  function onCancel() {
+    if (window.webkit && window.webkit.messageHandlers.action) {
+      window.webkit.messageHandlers.action.postMessage('cancel');
+    }
+  }
+
+  function onDone() {
+    if (window.webkit && window.webkit.messageHandlers.action) {
+      window.webkit.messageHandlers.action.postMessage('done');
+    }
+  }
+</script>
+</body>
+</html>

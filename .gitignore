@@ -1,0 +1,7 @@
+.build/
+*.app/
+*.dmg
+build.sh
+dist.sh
+.swiftpm/
+icon.iconset/
