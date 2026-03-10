@@ -25,9 +25,13 @@ codesign --force --deep --sign - VoiceInput.app
 open VoiceInput.app
 ```
 
-## ASR Provider Configuration
+## Settings
 
-The app stores all settings in `UserDefaults`. Configure via the Settings UI (menu bar icon → Settings). Four providers are supported:
+All configuration is done via the Settings UI (menu bar icon → Settings):
+
+![Settings](docs/settings.png)
+
+Settings are stored in `UserDefaults`. Four ASR providers are supported:
 
 ### 1. Groq (recommended — fast, free tier)
 
@@ -53,25 +57,52 @@ API Key:  <get from https://aistudio.google.com/apikey>
 
 ### 3. Local (OpenAI-compatible)
 
-Self-hosted ASR server exposing the OpenAI `/v1/audio/transcriptions` endpoint. Works with:
-- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) — best for Chinese + English mixed
+Self-hosted ASR server exposing the OpenAI `/v1/audio/transcriptions` endpoint. Works with any OpenAI-compatible backend. We recommend [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) for Chinese + English mixed transcription.
+
+#### Deploy SenseVoice with Docker
+
+```bash
+# Using faster-whisper-server (OpenAI-compatible wrapper)
+docker run -d --name sensevoice \
+  -p 10301:8000 \
+  fedirz/faster-whisper-server:latest \
+  --model SenseVoiceSmall
+
+# Or using FunASR's SenseVoice image
+docker run -d --name sensevoice \
+  -p 10301:10095 \
+  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-cpu-0.4.5 \
+  bash run_server.sh \
+    --model-dir SenseVoiceSmall
+```
+
+#### Other compatible backends
+
 - [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) — Whisper with CTranslate2
-- Any OpenAI-compatible audio transcription API
+- Any server implementing `POST /v1/audio/transcriptions` with `multipart/form-data` (file + model fields), returning `{"text": "..."}`
 
 ```
 Provider: Local
-Endpoint: http://<host>:<port>/v1/audio/transcriptions
-Model:    <model name served by your backend>
+Endpoint: http://<host>:10301/v1/audio/transcriptions
+Model:    sensevoice (or your model name)
 API Key:  <optional, depends on your server>
 ```
 
 ### 4. FunASR Streaming
 
-WebSocket-based streaming ASR using [FunASR](https://github.com/modelscope/FunASR). Unique feature: shows partial transcription results in real-time while recording.
+WebSocket-based streaming ASR using [FunASR](https://github.com/modelscope/FunASR). Unique feature: shows partial transcription results in real-time as you speak.
 
-Deploy server:
+#### Deploy FunASR streaming server with Docker
+
 ```bash
-docker run -p 10096:10095 registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12 bash run_server.sh --model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx --punc-dir damo/punc_ct-transformer_cn-en-common-vocab471067-large-onnx
+# Online/streaming mode with Paraformer
+docker run -d --name funasr \
+  -p 10096:10095 \
+  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12 \
+  bash run_server.sh \
+    --model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online \
+    --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx \
+    --punc-dir damo/punc_ct-transformer_cn-en-common-vocab471067-large-onnx
 ```
 
 ```
@@ -79,6 +110,8 @@ Provider: FunASR
 Endpoint: ws://<host>:10096
 Model:    2pass (recommended) / online / offline
 ```
+
+> `2pass` = real-time partial results + final correction. `online` = streaming only. `offline` = process after recording stops.
 
 ## System Permissions
 
