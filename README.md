@@ -57,7 +57,7 @@ Type4Me 解决的就是这三个问题：**快、本地、可定制**。
 ### 构建
 
 ```bash
-git clone https://github.com/你的用户名/type4me.git
+git clone https://github.com/joewongjc/type4me.git
 cd type4me
 swift build -c release
 ```
