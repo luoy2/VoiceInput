@@ -1,0 +1,57 @@
+import Foundation
+
+// MARK: - Provider Enum
+
+enum ASRProvider: String, CaseIterable, Codable, Sendable {
+    // International
+    case openai
+    case azure
+    case google
+    case aws
+    // China
+    case volcano
+    case aliyun
+    case tencent
+    case iflytek
+    // Fallback
+    case custom
+
+    var displayName: String {
+        switch self {
+        case .openai:   return "OpenAI Whisper"
+        case .azure:    return "Azure Speech"
+        case .google:   return "Google Cloud STT"
+        case .aws:      return "AWS Transcribe"
+        case .volcano:  return L("火山引擎 (Doubao)", "Volcano (Doubao)")
+        case .aliyun:   return L("阿里云", "Alibaba Cloud")
+        case .tencent:  return L("腾讯云", "Tencent Cloud")
+        case .iflytek:  return L("讯飞", "iFLYTEK")
+        case .custom:   return L("自定义", "Custom")
+        }
+    }
+}
+
+// MARK: - Credential Field Descriptor
+
+struct CredentialField: Sendable, Identifiable {
+    let key: String
+    let label: String
+    let placeholder: String
+    let isSecure: Bool
+    let isOptional: Bool
+    let defaultValue: String
+
+    var id: String { key }
+}
+
+// MARK: - Provider Config Protocol
+
+protocol ASRProviderConfig: Sendable {
+    static var provider: ASRProvider { get }
+    static var displayName: String { get }
+    static var credentialFields: [CredentialField] { get }
+
+    init?(credentials: [String: String])
+    func toCredentials() -> [String: String]
+    var isValid: Bool { get }
+}

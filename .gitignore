@@ -1,0 +1,23 @@
+# Build
+.build/
+AECTest/.build/
+dist/
+
+# IDE / Editor
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+.env.local
+credentials.json
+
+# Internal docs
+docs/plans/
+.git-backup
