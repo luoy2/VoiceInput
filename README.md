@@ -142,9 +142,29 @@ bash scripts/deploy.sh
 
 脚本会自动完成：编译 → 打包为 `.app` → 签名 → 安装到 `/Applications/` → 启动。
 
-#### 第四步：配置
+#### 第四步：下载识别模型
 
-- **本地识别**：打开设置 → ASR 设置 → 选择「本地识别 (Paraformer)」→ 选择模型并下载（推荐「中英双语」~1GB）
+本地识别需要下载模型文件。三种模型可选：
+
+| 模型 | 大小 | 说明 |
+|------|------|------|
+| [极速轻量](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2) | ~20 MB | 速度最快，精度一般 |
+| [均衡推荐](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13.tar.bz2) | ~236 MB | 精度与大小的最佳平衡 |
+| [中英双语](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2) | ~1 GB | 精度最高，支持中英混合 |
+
+点击上方链接下载模型（`.tar.bz2` 文件），下载完成后在终端执行：
+
+```bash
+# 创建模型目录并解压（以中英双语模型为例，替换为你下载的文件名）
+mkdir -p ~/Library/Application\ Support/Type4Me/Models
+tar xjf ~/Downloads/sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2 -C ~/Library/Application\ Support/Type4Me/Models/
+```
+
+> macOS 自带的解压工具无法处理 `.tar.bz2`，请使用终端命令解压。
+
+#### 第五步：配置
+
+- **本地识别**：打开设置 → ASR 设置 → 选择「本地识别 (Paraformer)」→ 选中已下载的模型
 - **云端识别**：首次启动会弹出设置向导，填入火山引擎的 App Key、Access Key 和 Resource ID。详见[配置指引](https://my.feishu.cn/wiki/QdEnwBMfUi0mN4k3ucMcNYhUnXr)
 
 #### 后续更新
