@@ -6,32 +6,24 @@ struct VolcanoASRConfig: ASRProviderConfig, Sendable {
     static var displayName: String { L("火山引擎 (Doubao)", "Volcano (Doubao)") }
 
     static var credentialFields: [CredentialField] {[
-        CredentialField(key: "appKey", label: "App Key", placeholder: "APPID", isSecure: false, isOptional: false, defaultValue: ""),
-        CredentialField(key: "accessKey", label: "Access Token", placeholder: L("访问令牌", "Access token"), isSecure: true, isOptional: false, defaultValue: ""),
+        CredentialField(key: "accessKey", label: "API Key", placeholder: L("豆包语音 API Key", "Doubao Speech API Key"), isSecure: true, isOptional: false, defaultValue: ""),
     ]}
 
-    let appKey: String
-    let accessKey: String
-    let resourceId: String
+    let accessKey: String   // x-api-key for v3 API
     let uid: String
 
     init?(credentials: [String: String]) {
-        guard let appKey = credentials["appKey"], !appKey.isEmpty,
-              let accessKey = credentials["accessKey"], !accessKey.isEmpty
+        guard let accessKey = credentials["accessKey"], !accessKey.isEmpty
         else { return nil }
-        self.appKey = appKey
         self.accessKey = accessKey
-        self.resourceId = credentials["resourceId"]?.isEmpty == false
-            ? credentials["resourceId"]!
-            : "volc.bigasr.sauc.duration"
         self.uid = ASRIdentityStore.loadOrCreateUID()
     }
 
     func toCredentials() -> [String: String] {
-        ["appKey": appKey, "accessKey": accessKey, "resourceId": resourceId]
+        ["accessKey": accessKey]
     }
 
     var isValid: Bool {
-        !appKey.isEmpty && !accessKey.isEmpty
+        !accessKey.isEmpty
     }
 }

@@ -91,9 +91,19 @@ final class VolcProtocolTests: XCTestCase {
     // MARK: - Client Request JSON
 
     func testClientRequestJSON() throws {
-        let payload = VolcProtocol.buildClientRequest(uid: "test-user-123")
+        let payload = VolcProtocol.buildClientRequest(
+            appid: "test-app-id",
+            token: "test-token",
+            cluster: "volcengine_input_common",
+            uid: "test-user-123"
+        )
         let json = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
         XCTAssertNotNil(json)
+
+        let app = json?["app"] as? [String: Any]
+        XCTAssertEqual(app?["appid"] as? String, "test-app-id")
+        XCTAssertEqual(app?["token"] as? String, "test-token")
+        XCTAssertEqual(app?["cluster"] as? String, "volcengine_input_common")
 
         let user = json?["user"] as? [String: Any]
         XCTAssertEqual(user?["uid"] as? String, "test-user-123")
@@ -106,13 +116,17 @@ final class VolcProtocolTests: XCTestCase {
         let request = json?["request"] as? [String: Any]
         XCTAssertEqual(request?["show_utterances"] as? Bool, true)
         XCTAssertEqual(request?["result_type"] as? String, "full")
-        XCTAssertEqual(request?["enable_nonstream"] as? Bool, true)
-        XCTAssertEqual(request?["enable_ddc"] as? Bool, true)
+        XCTAssertNotNil(request?["reqid"])
+        XCTAssertEqual(request?["workflow"] as? String, "audio_in,resample,partition,nlu_punctuate,itn,final")
+        XCTAssertEqual(request?["sequence"] as? Int, 1)
         XCTAssertNil(request?["context"])
     }
 
-    func testClientRequestJSON_usesHotwordsAndBoostingCorpusFields() throws {
+    func testClientRequestJSON_usesHotwords() throws {
         let payload = VolcProtocol.buildClientRequest(
+            appid: "test-app-id",
+            token: "test-token",
+            cluster: "volcengine_input_common",
             uid: "test-user-123",
             options: ASRRequestOptions(
                 enablePunc: true,
@@ -123,8 +137,6 @@ final class VolcProtocolTests: XCTestCase {
         )
         let json = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
         let request = json?["request"] as? [String: Any]
-        XCTAssertEqual(request?["boosting_table_id"] as? String, nil)
-        XCTAssertEqual(request?["context_history_length"] as? Int, 6)
 
         let contextString = request?["context"] as? String
         XCTAssertNotNil(contextString)
@@ -133,11 +145,6 @@ final class VolcProtocolTests: XCTestCase {
         let hotwords = context?["hotwords"] as? [[String: Any]]
         XCTAssertEqual(hotwords?.count, 2)
         XCTAssertEqual(hotwords?.first?["word"] as? String, "Type4Me")
-        XCTAssertNil(context?["correct_words"])
-
-        let corpus = request?["corpus"] as? [String: Any]
-        XCTAssertEqual(corpus?["boosting_table_id"] as? String, "boost-123")
-        XCTAssertNil(corpus?["correct_table_id"])
     }
 
     // MARK: - Full Message Encoding

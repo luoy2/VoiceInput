@@ -4,7 +4,7 @@ enum KeychainService {
 
     private static var credentialsURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Type4Me", isDirectory: true)
+            .appendingPathComponent("VoiceInput", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("credentials.json")
     }
@@ -242,14 +242,14 @@ enum KeychainService {
 
     // MARK: - Application Support Directory Migration
 
-    /// Merge ~/Library/Application Support/TypeFlow/ files into Type4Me/ (one-time, from old project name).
+    /// Merge ~/Library/Application Support/TypeFlow/ files into VoiceInput/ (one-time, from old project name).
     /// Uses file-level merge instead of directory rename, because other init code may create
     /// the new directory before this migration runs.
     private static func migrateAppSupportDirectory() {
         let fm = FileManager.default
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let oldDir = appSupport.appendingPathComponent("TypeFlow", isDirectory: true)
-        let newDir = appSupport.appendingPathComponent("Type4Me", isDirectory: true)
+        let newDir = appSupport.appendingPathComponent("VoiceInput", isDirectory: true)
 
         // Old directory must exist and contain real data (credentials.json is the marker)
         guard fm.fileExists(atPath: oldDir.appendingPathComponent("credentials.json").path) else { return }
@@ -273,7 +273,7 @@ enum KeychainService {
         }
 
         if movedCount > 0 {
-            NSLog("[KeychainService] Migrated %d files from TypeFlow → Type4Me", movedCount)
+            NSLog("[KeychainService] Migrated %d files from TypeFlow → VoiceInput", movedCount)
         }
 
         // Clean up old directory if empty

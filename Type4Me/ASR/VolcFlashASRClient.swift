@@ -50,8 +50,7 @@ enum VolcFlashASRClient {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(config.appKey, forHTTPHeaderField: "X-Api-App-Key")
-        request.setValue(config.accessKey, forHTTPHeaderField: "X-Api-Access-Key")
+        request.setValue(config.accessKey, forHTTPHeaderField: "x-api-key")
         request.setValue(resourceId, forHTTPHeaderField: "X-Api-Resource-Id")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Api-Request-Id")
         request.setValue("-1", forHTTPHeaderField: "X-Api-Sequence")

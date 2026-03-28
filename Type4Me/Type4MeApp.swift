@@ -7,14 +7,14 @@ struct Type4MeApp: App {
 
     var body: some Scene {
         MenuBarExtra(
-            "Type4Me",
+            "VoiceInput",
             systemImage: appDelegate.appState.barPhase == .hidden ? "mic" : "mic.fill"
         ) {
             MenuBarContent()
                 .environment(appDelegate.appState)
         }
 
-        Window(L("Type4Me 设置", "Type4Me Settings"), id: "settings") {
+        Window(L("VoiceInput 设置", "VoiceInput Settings"), id: "settings") {
             SettingsView()
                 .environment(appDelegate.appState)
         }
@@ -22,7 +22,7 @@ struct Type4MeApp: App {
         .defaultPosition(.center)
         .windowStyle(.hiddenTitleBar)
 
-        Window(L("Type4Me 设置向导", "Type4Me Setup"), id: "setup") {
+        Window(L("VoiceInput 设置向导", "VoiceInput Setup"), id: "setup") {
             SetupWizardView()
                 .environment(appDelegate.appState)
         }
@@ -41,29 +41,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let startSoundDelay: Duration = .milliseconds(200)
     private var floatingBarController: FloatingBarController?
     private let hotkeyManager = HotkeyManager()
+    private let gamepadMonitor = GamepadMonitor(
+        holdButton: GamepadButton.savedHoldButton,
+        toggleButton: GamepadButton.savedToggleButton,
+        sendButton: GamepadButton.savedSendButton
+    )
     private let session = RecognitionSession()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let launchT0 = CFAbsoluteTimeGetCurrent()
         NSLog("[Type4Me] applicationDidFinishLaunching")
-        KeychainService.migrateIfNeeded()
-        HotwordStorage.seedIfNeeded()
-
         DebugFileLogger.startSession()
         DebugFileLogger.log("applicationDidFinishLaunching")
+
+        var t0 = CFAbsoluteTimeGetCurrent()
+        KeychainService.migrateIfNeeded()
+        var ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] KeychainService.migrateIfNeeded: \(ms)ms")
+
+        t0 = CFAbsoluteTimeGetCurrent()
+        HotwordStorage.seedIfNeeded()
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] HotwordStorage.seedIfNeeded: \(ms)ms")
+
+        t0 = CFAbsoluteTimeGetCurrent()
         floatingBarController = FloatingBarController(state: appState)
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] FloatingBarController init: \(ms)ms")
 
         // Bridge ASR events → AppState for floating bar display
         let session = self.session
 
         // 历史记录字数迁移（用 session 自带的 historyStore，迁移后 UI 能刷新）
-        Task { await session.historyStore.migrateCharacterCounts() }
+        Task {
+            let taskT0 = CFAbsoluteTimeGetCurrent()
+            await session.historyStore.migrateCharacterCounts()
+            let taskMs = Int((CFAbsoluteTimeGetCurrent() - taskT0) * 1000)
+            DebugFileLogger.log("[PERF] historyStore.migrateCharacterCounts: \(taskMs)ms")
+        }
         let appState = self.appState
         let startSoundDelay = self.startSoundDelay
 
+        t0 = CFAbsoluteTimeGetCurrent()
         SoundFeedback.warmUp()
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] SoundFeedback.warmUp: \(ms)ms")
 
         // Pre-warm audio subsystem so the first recording starts instantly
-        Task { await session.warmUp() }
+        Task {
+            let taskT0 = CFAbsoluteTimeGetCurrent()
+            await session.warmUp()
+            let taskMs = Int((CFAbsoluteTimeGetCurrent() - taskT0) * 1000)
+            DebugFileLogger.log("[PERF] session.warmUp: \(taskMs)ms")
+        }
 
         // Bridge audio level → isolated meter (no SwiftUI observation overhead)
         Task {
@@ -110,10 +140,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Start periodic update checking
+        t0 = CFAbsoluteTimeGetCurrent()
         UpdateChecker.shared.startPeriodicChecking(appState: appState)
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] UpdateChecker.startPeriodicChecking: \(ms)ms")
 
         // Reconcile current mode against the active provider before hotkeys are registered.
+        t0 = CFAbsoluteTimeGetCurrent()
         refreshModeAvailability()
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] refreshModeAvailability: \(ms)ms")
 
         // Re-register when modes change in Settings
         NotificationCenter.default.addObserver(
@@ -158,8 +194,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            let hotkeyT0 = CFAbsoluteTimeGetCurrent()
             self.startHotkeyWithRetry()
+            let hotkeyMs = Int((CFAbsoluteTimeGetCurrent() - hotkeyT0) * 1000)
+            DebugFileLogger.log("[PERF] startHotkeyWithRetry: \(hotkeyMs)ms")
         }
+
+        // Start gamepad monitoring
+        t0 = CFAbsoluteTimeGetCurrent()
+        setupGamepadMonitor()
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] setupGamepadMonitor: \(ms)ms")
 
         // Show setup wizard on first launch
         if !appState.hasCompletedSetup {
@@ -171,7 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Check if menu bar icon is hidden by macOS 26+ "Allow in Menu Bar" setting
+        t0 = CFAbsoluteTimeGetCurrent()
         checkMenuBarVisibility()
+        ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        DebugFileLogger.log("[PERF] checkMenuBarVisibility: \(ms)ms")
 
         // Dynamic activation policy: show dock icon when windows are open
         NotificationCenter.default.addObserver(
@@ -187,6 +235,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWindow.willCloseNotification,
             object: nil
         )
+
+        let totalMs = Int((CFAbsoluteTimeGetCurrent() - launchT0) * 1000)
+        DebugFileLogger.log("[PERF] total startup: \(totalMs)ms")
     }
 
     private func refreshModeAvailability() {
@@ -288,12 +339,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Gamepad Monitor
+
+    private func setupGamepadMonitor() {
+        // Expose the monitor to the Settings UI
+        GamepadSettingsCard.sharedMonitor = gamepadMonitor
+
+        let session = self.session
+        let appState = self.appState
+
+        // Hold button: press to start recording, release to stop
+        gamepadMonitor.onHoldStart = { [weak self] in
+            guard self != nil else { return }
+            let selectedProvider = KeychainService.selectedASRProvider
+            let modes = appState.availableModes
+            let resolvedMode = ASRProviderRegistry.resolvedMode(
+                for: appState.currentMode, provider: selectedProvider
+            )
+            let effectiveMode = modes.first(where: { $0.id == resolvedMode.id }) ?? resolvedMode
+            NSLog("[Type4Me] >>> GAMEPAD: Hold START (mode: %@)", effectiveMode.name)
+            DebugFileLogger.log("gamepad hold start mode=\(effectiveMode.name)")
+            Task { @MainActor in
+                appState.currentMode = effectiveMode
+                appState.startRecording()
+            }
+            Task {
+                await session.setAppendNewline(true)
+                await session.startRecording(mode: effectiveMode)
+            }
+        }
+
+        gamepadMonitor.onHoldEnd = { [weak self] in
+            guard self != nil else { return }
+            NSLog("[Type4Me] >>> GAMEPAD: Hold STOP")
+            DebugFileLogger.log("gamepad hold stop")
+            Task { @MainActor in appState.stopRecording() }
+            Task { await session.stopRecording() }
+        }
+
+        // Toggle button: tap to start/stop
+        gamepadMonitor.onToggleTap = { [weak self] in
+            guard self != nil else { return }
+            let isRecording = appState.barPhase == .recording || appState.barPhase == .preparing
+            if isRecording {
+                NSLog("[Type4Me] >>> GAMEPAD: Toggle STOP")
+                DebugFileLogger.log("gamepad toggle stop")
+                Task { @MainActor in appState.stopRecording() }
+                Task { await session.stopRecording() }
+            } else {
+                let selectedProvider = KeychainService.selectedASRProvider
+                let modes = appState.availableModes
+                let resolvedMode = ASRProviderRegistry.resolvedMode(
+                    for: appState.currentMode, provider: selectedProvider
+                )
+                let effectiveMode = modes.first(where: { $0.id == resolvedMode.id }) ?? resolvedMode
+                NSLog("[Type4Me] >>> GAMEPAD: Toggle START (mode: %@)", effectiveMode.name)
+                DebugFileLogger.log("gamepad toggle start mode=\(effectiveMode.name)")
+                Task { @MainActor in
+                    appState.currentMode = effectiveMode
+                    appState.startRecording()
+                }
+                Task { await session.startRecording(mode: effectiveMode) }
+            }
+        }
+
+        // Send button: currently unused, reserved for future use
+        gamepadMonitor.onSendTap = {
+            NSLog("[Type4Me] >>> GAMEPAD: Send TAP (no-op)")
+        }
+
+        // Listen for gamepad button config changes from Settings UI
+        NotificationCenter.default.addObserver(
+            forName: .gamepadConfigDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { [weak self] in
+                guard let self else { return }
+                self.gamepadMonitor.updateHoldButton(GamepadButton.savedHoldButton)
+                self.gamepadMonitor.updateToggleButton(GamepadButton.savedToggleButton)
+                self.gamepadMonitor.updateSendButton(GamepadButton.savedSendButton)
+                NSLog("[Type4Me] Gamepad buttons updated: hold=%@, toggle=%@, send=%@",
+                      GamepadButton.savedHoldButton.displayName,
+                      GamepadButton.savedToggleButton.displayName,
+                      GamepadButton.savedSendButton.displayName)
+            }
+        }
+
+        gamepadMonitor.start()
+    }
+
     @objc
     private func handleManagedWindowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               window.identifier?.rawValue == "settings" ||
               window.identifier?.rawValue == "setup" ||
-              window.title.contains("Type4Me") else { return }
+              window.title.contains("VoiceInput") else { return }
         NSApp.setActivationPolicy(.regular)
     }
 
@@ -380,8 +521,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "Menu Bar Icon Hidden"
         )
         alert.informativeText = L(
-            "macOS 的菜单栏设置可能隐藏了 Type4Me 图标。\n\n请前往 系统设置 > 菜单栏，在「允许在菜单栏中显示」列表中开启 Type4Me。",
-            "macOS may have hidden the Type4Me icon.\n\nGo to System Settings > Menu Bar and enable Type4Me in the 'Allow in Menu Bar' list."
+            "macOS 的菜单栏设置可能隐藏了 VoiceInput 图标。\n\n请前往 系统设置 > 菜单栏，在「允许在菜单栏中显示」列表中开启 VoiceInput。",
+            "macOS may have hidden the VoiceInput icon.\n\nGo to System Settings > Menu Bar and enable VoiceInput in the 'Allow in Menu Bar' list."
         )
         alert.alertStyle = .warning
         alert.addButton(withTitle: L("打开系统设置", "Open System Settings"))
@@ -472,7 +613,7 @@ struct MenuBarContent: View {
 
         Divider()
 
-        Button(L("退出 Type4Me", "Quit Type4Me")) {
+        Button(L("退出 VoiceInput", "Quit VoiceInput")) {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)

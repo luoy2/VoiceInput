@@ -6,7 +6,7 @@ enum DebugFileLogger {
 
     static var logURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Type4Me", isDirectory: true)
+            .appendingPathComponent("VoiceInput", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("debug.log")
     }

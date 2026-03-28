@@ -79,9 +79,17 @@ enum ASRProviderRegistry {
                 createClient: { BailianASRClient() },
                 capabilities: .quickOnly
             ),
-            .openai:  ProviderEntry(configType: OpenAIASRConfig.self,  createClient: nil),
+            .openai: ProviderEntry(
+                configType: OpenAIASRConfig.self,
+                createClient: { OpenAIASRClient() },
+                capabilities: .quickOnly
+            ),
             .azure:   ProviderEntry(configType: AzureASRConfig.self,   createClient: nil),
-            .google:  ProviderEntry(configType: GoogleASRConfig.self,  createClient: nil),
+            .google: ProviderEntry(
+                configType: GoogleASRConfig.self,
+                createClient: { GeminiASRClient() },
+                capabilities: .quickOnly
+            ),
             .aws:     ProviderEntry(configType: AWSASRConfig.self,     createClient: nil),
             .aliyun:  ProviderEntry(configType: AliyunASRConfig.self,  createClient: nil),
             .tencent: ProviderEntry(configType: TencentASRConfig.self, createClient: nil),

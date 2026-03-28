@@ -26,6 +26,12 @@ final class HotkeyManager: NSObject {
     /// Maximum hold duration before auto-stop (seconds).
     private let maxHoldDuration: TimeInterval = 120
 
+    // Modifier tap detection (for toggle mode):
+    // Only trigger on quick press+release (<350ms) without other keys pressed in between.
+    private var modifierDownTime: [UUID: CFAbsoluteTime] = [:]
+    private var modifierInterrupted = false
+    private var lastToggleTime: CFAbsoluteTime = 0
+
     // MARK: - State
 
     /// When true, all hotkey events pass through unhandled (used during hotkey recording).
@@ -47,6 +53,8 @@ final class HotkeyManager: NSObject {
         wasModifierDown = [:]
         holdSafetyTimers.values.forEach { $0.invalidate() }
         holdSafetyTimers = [:]
+        modifierDownTime = [:]
+        modifierInterrupted = false
     }
 
     // MARK: - Start / Stop
@@ -117,6 +125,13 @@ final class HotkeyManager: NSObject {
         }
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // Mark modifier interrupted if any regular key is pressed while a modifier toggle is held
+        if (type == .keyDown || type == .keyUp) && !isModifierKeyCode(keyCode) {
+            if wasModifierDown.values.contains(true) {
+                modifierInterrupted = true
+            }
+        }
 
         for binding in bindings {
             guard binding.keyCode == keyCode else { continue }
@@ -206,24 +221,34 @@ final class HotkeyManager: NSObject {
             let wasDown = wasModifierDown[id] ?? false
             if pressed && !wasDown {
                 wasModifierDown[id] = true
-                if let activeId = activeToggleModeId, activeId != id {
-                    // Cross-mode stop via modifier key
-                    toggleState[activeId] = false
-                    activeToggleModeId = nil
-                    onCrossModeStop?(id)
-                } else {
-                    let isOn = toggleState[id] ?? false
-                    toggleState[id] = !isOn
-                    if !isOn {
-                        activeToggleModeId = id
-                        binding.onStart()
-                    } else {
+                modifierDownTime[id] = CFAbsoluteTimeGetCurrent()
+                modifierInterrupted = false
+            } else if !pressed && wasDown {
+                wasModifierDown[id] = false
+                let holdDuration = CFAbsoluteTimeGetCurrent() - (modifierDownTime[id] ?? 0)
+                let now = CFAbsoluteTimeGetCurrent()
+                let debounceOK = now - lastToggleTime > 0.4
+                // Only trigger on quick tap (<350ms) without interruption
+                if holdDuration < 0.35 && debounceOK && !modifierInterrupted {
+                    lastToggleTime = now
+                    if let activeId = activeToggleModeId, activeId != id {
+                        // Cross-mode stop via modifier key
+                        toggleState[activeId] = false
                         activeToggleModeId = nil
-                        binding.onStop()
+                        onCrossModeStop?(id)
+                    } else {
+                        let isOn = toggleState[id] ?? false
+                        toggleState[id] = !isOn
+                        if !isOn {
+                            activeToggleModeId = id
+                            binding.onStart()
+                        } else {
+                            activeToggleModeId = nil
+                            binding.onStop()
+                        }
                     }
                 }
-            } else if !pressed {
-                wasModifierDown[id] = false
+                modifierInterrupted = false
             }
         }
     }

@@ -25,7 +25,7 @@ enum ASRProvider: String, CaseIterable, Codable, Sendable {
         case .sherpa:   return L("本地识别 (Paraformer)", "Local (Paraformer)")
         case .openai:   return "OpenAI Whisper"
         case .azure:    return "Azure Speech"
-        case .google:   return "Google Cloud STT"
+        case .google:   return "Google Gemini"
         case .aws:      return "AWS Transcribe"
         case .deepgram: return "Deepgram"
         case .volcano:  return L("火山引擎 (Doubao)", "Volcano (Doubao)")

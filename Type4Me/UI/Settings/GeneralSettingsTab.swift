@@ -648,7 +648,7 @@ struct ASRSettingsCard: View, SettingsCardHelpers {
                 asrTestStatus = .success
             } catch {
                 guard !Task.isCancelled else { return }
-                asrTestStatus = .failed(L("连接失败", "Connection failed"))
+                asrTestStatus = .failed(error.localizedDescription)
             }
         }
     }
@@ -896,6 +896,160 @@ struct LLMSettingsCard: View, SettingsCardHelpers {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MARK: - Gamepad Settings Card
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct GamepadSettingsCard: View, SettingsCardHelpers {
+
+    @State private var holdButton: GamepadButton = GamepadButton.savedHoldButton
+    @State private var toggleButton: GamepadButton = GamepadButton.savedToggleButton
+    @State private var sendButton: GamepadButton = GamepadButton.savedSendButton
+    @State private var isConnected = false
+    @State private var capturingSlot: CaptureSlot? = nil
+
+    private enum CaptureSlot: String {
+        case hold, toggle, send
+    }
+
+    /// The shared GamepadMonitor is owned by AppDelegate. We access it via
+    /// a lightweight static reference set during app launch. This avoids
+    /// coupling the settings view to the app delegate.
+    static var sharedMonitor: GamepadMonitor?
+
+    var body: some View {
+        settingsGroupCard(L("蓝牙手柄", "Bluetooth Gamepad")) {
+            Text(L("通过蓝牙手柄控制录音，支持 8BitDo Zero 2 和 Nintendo Pro Controller",
+                    "Control recording via Bluetooth gamepad. Supports 8BitDo Zero 2 and Nintendo Pro Controller."))
+                .font(.system(size: 10))
+                .foregroundStyle(TF.settingsTextTertiary)
+                .padding(.bottom, 8)
+
+            // Connection status
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isConnected ? TF.settingsAccentGreen : TF.settingsTextTertiary.opacity(0.4))
+                    .frame(width: 7, height: 7)
+                Text(isConnected
+                     ? L("手柄已连接", "Gamepad connected")
+                     : L("未检测到手柄", "No gamepad detected"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(isConnected ? TF.settingsAccentGreen : TF.settingsTextSecondary)
+            }
+            .padding(.bottom, 6)
+
+            SettingsDivider()
+
+            // Button mappings
+            buttonMappingRow(
+                label: L("按住说话", "Hold to talk"),
+                selection: $holdButton,
+                slot: .hold
+            )
+            SettingsDivider()
+            buttonMappingRow(
+                label: L("切换录音", "Toggle record"),
+                selection: $toggleButton,
+                slot: .toggle
+            )
+            SettingsDivider()
+            buttonMappingRow(
+                label: L("发送", "Send"),
+                selection: $sendButton,
+                slot: .send
+            )
+
+            if capturingSlot != nil {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .frame(width: 14, height: 14)
+                    Text(L("按下手柄上的任意按钮来捕获...", "Press any gamepad button to capture..."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(TF.settingsAccentAmber)
+                    Spacer()
+                    Button(L("取消", "Cancel")) {
+                        capturingSlot = nil
+                        Self.sharedMonitor?.stopCapture()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TF.settingsTextSecondary)
+                }
+                .padding(.top, 8)
+            }
+        }
+        .onAppear {
+            // Poll connection state from the shared monitor
+            isConnected = Self.sharedMonitor?.isConnected ?? false
+            Self.sharedMonitor?.onConnectionChanged = { connected in
+                isConnected = connected
+            }
+        }
+    }
+
+    // MARK: - Button Mapping Row
+
+    private func buttonMappingRow(
+        label: String,
+        selection: Binding<GamepadButton>,
+        slot: CaptureSlot
+    ) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(TF.settingsText)
+            Spacer()
+            Picker("", selection: selection) {
+                ForEach(GamepadButton.allCases, id: \.rawValue) { btn in
+                    Text(btn.displayName).tag(btn)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .onChange(of: selection.wrappedValue) { _, _ in
+                saveAndNotify()
+            }
+
+            Button(L("捕获", "Capture")) {
+                startCapture(for: slot)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(capturingSlot == slot ? TF.settingsAccentAmber : TF.settingsTextSecondary)
+            .disabled(capturingSlot != nil && capturingSlot != slot)
+        }
+        .frame(minHeight: 40)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Capture
+
+    private func startCapture(for slot: CaptureSlot) {
+        guard let monitor = Self.sharedMonitor else { return }
+        capturingSlot = slot
+        monitor.onButtonCaptured = { button in
+            switch slot {
+            case .hold: holdButton = button
+            case .toggle: toggleButton = button
+            case .send: sendButton = button
+            }
+            capturingSlot = nil
+            saveAndNotify()
+        }
+        monitor.startCapture()
+    }
+
+    // MARK: - Persistence
+
+    private func saveAndNotify() {
+        GamepadButton.savedHoldButton = holdButton
+        GamepadButton.savedToggleButton = toggleButton
+        GamepadButton.savedSendButton = sendButton
+        NotificationCenter.default.post(name: .gamepadConfigDidChange, object: nil)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // MARK: - General Settings Tab
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -996,6 +1150,15 @@ struct GeneralSettingsTab: View, SettingsCardHelpers {
             } right: {
                 LLMSettingsCard()
             }
+
+            moduleSpacer()
+
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // MODULE 3: 手柄设置
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            moduleHeader(L("手柄设置", "Gamepad"))
+
+            GamepadSettingsCard()
 
         }
         .task {

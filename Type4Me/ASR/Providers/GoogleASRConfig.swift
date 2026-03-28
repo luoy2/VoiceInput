@@ -3,22 +3,35 @@ import Foundation
 struct GoogleASRConfig: ASRProviderConfig, Sendable {
 
     static let provider = ASRProvider.google
-    static let displayName = "Google Cloud STT"
+    static let displayName = "Google Gemini"
+    static let defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+    static let defaultModel = "gemini-2.0-flash"
 
-    static var credentialFields: [CredentialField] {[
-        CredentialField(key: "serviceAccountJSON", label: "Service Account JSON", placeholder: L("粘贴 JSON 内容或文件路径", "Paste JSON content or file path"), isSecure: true, isOptional: false, defaultValue: ""),
-    ]}
+    static let credentialFields: [CredentialField] = [
+        CredentialField(key: "apiKey", label: "API Key", placeholder: "AIza...", isSecure: true, isOptional: false, defaultValue: ""),
+        CredentialField(key: "model", label: "Model", placeholder: defaultModel, isSecure: false, isOptional: false, defaultValue: defaultModel),
+        CredentialField(key: "baseURL", label: "Base URL", placeholder: defaultBaseURL, isSecure: false, isOptional: true, defaultValue: defaultBaseURL),
+    ]
 
-    let serviceAccountJSON: String
+    let apiKey: String
+    let model: String
+    let baseURL: String
 
     init?(credentials: [String: String]) {
-        guard let json = credentials["serviceAccountJSON"], !json.isEmpty else { return nil }
-        self.serviceAccountJSON = json
+        guard let apiKey = credentials["apiKey"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !apiKey.isEmpty else { return nil }
+
+        let model = credentials["model"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = credentials["baseURL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        self.apiKey = apiKey
+        self.model = model?.isEmpty == false ? model! : Self.defaultModel
+        self.baseURL = baseURL?.isEmpty == false ? baseURL! : Self.defaultBaseURL
     }
 
     func toCredentials() -> [String: String] {
-        ["serviceAccountJSON": serviceAccountJSON]
+        ["apiKey": apiKey, "model": model, "baseURL": baseURL]
     }
 
-    var isValid: Bool { !serviceAccountJSON.isEmpty }
+    var isValid: Bool { !apiKey.isEmpty && !model.isEmpty && !baseURL.isEmpty }
 }

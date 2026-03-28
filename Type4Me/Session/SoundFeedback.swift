@@ -9,6 +9,7 @@ enum StartSoundStyle: String, CaseIterable, Sendable {
     case chime     = "chime"
     case waterDrop1 = "waterDrop1"
     case waterDrop2 = "waterDrop2"
+    case custom    = "custom"
 
     var displayName: String {
         switch self {
@@ -16,6 +17,7 @@ enum StartSoundStyle: String, CaseIterable, Sendable {
         case .chime:      return L("电子提示音", "Chime")
         case .waterDrop1: return L("水滴 1", "Water Drop 1")
         case .waterDrop2: return L("水滴 2", "Water Drop 2")
+        case .custom:     return L("自定义", "Custom")
         }
     }
 }
@@ -80,10 +82,13 @@ enum SoundFeedback {
             _ = try? soundFileURL(for: startSpec)
             preparePlayersIfNeeded()
             // Pre-cache bundled sounds
-            for style in [StartSoundStyle.waterDrop1, .waterDrop2] {
+            for style in [StartSoundStyle.waterDrop1, .waterDrop2, .custom] {
                 if let url = bundledSoundURL(for: style) {
                     _ = try? preparedPlayer(forURL: url, label: style.rawValue)
                 }
+            }
+            if let stopURL = bundledSoundURL(filename: "custom-stop") {
+                _ = try? preparedPlayer(forURL: stopURL, label: "custom-stop")
             }
         }
     }
@@ -102,16 +107,26 @@ enum SoundFeedback {
             return
         case .chime:
             play(spec: startSpec, retryCount: 2)
-        case .waterDrop1, .waterDrop2:
+        case .waterDrop1, .waterDrop2, .custom:
             playBundled(style: style)
         }
     }
 
     /// Crisper, more decisive double tone for recording stop.
+    /// When the user has selected `custom` start sound, play the custom stop wav instead.
     static func playStop() {
-        NSLog("[SoundFeedback] playStop")
-        DebugFileLogger.log("sound playStop invoked")
-        play(spec: stopSpec)
+        let style = StartSoundStyle(
+            rawValue: UserDefaults.standard.string(forKey: "tf_startSound") ?? StartSoundStyle.chime.rawValue
+        ) ?? .chime
+
+        NSLog("[SoundFeedback] playStop style=%@", style.rawValue)
+        DebugFileLogger.log("sound playStop invoked style=\(style.rawValue)")
+
+        if style == .custom {
+            playBundledStop()
+        } else {
+            play(spec: stopSpec)
+        }
     }
 
     /// Low descending fifth (330→220 Hz). Unmistakable but not harsh.
@@ -126,7 +141,7 @@ enum SoundFeedback {
         switch style {
         case .off: return
         case .chime: play(spec: startSpec, retryCount: 0)
-        case .waterDrop1, .waterDrop2: playBundled(style: style)
+        case .waterDrop1, .waterDrop2, .custom: playBundled(style: style)
         }
     }
 
@@ -137,15 +152,20 @@ enum SoundFeedback {
         switch style {
         case .waterDrop1: filename = "water-drop-1"
         case .waterDrop2: filename = "water-drop-2"
+        case .custom:     filename = "custom-start"
         default: return nil
         }
+        return bundledSoundURL(filename: filename)
+    }
+
+    private static func bundledSoundURL(filename: String) -> URL? {
         // Look in app bundle Resources/Sounds
         if let url = Bundle.main.url(forResource: filename, withExtension: "wav", subdirectory: "Sounds") {
             return url
         }
         // Fallback: look in Application Support
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Type4Me", isDirectory: true)
+            .appendingPathComponent("VoiceInput", isDirectory: true)
             .appendingPathComponent("Sounds", isDirectory: true)
         let url = appSupport.appendingPathComponent("\(filename).wav")
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
@@ -168,6 +188,27 @@ enum SoundFeedback {
             } catch {
                 NSLog("[SoundFeedback] %@ play failed: %@", style.rawValue, String(describing: error))
                 play(spec: startSpec, retryCount: 0)
+            }
+        }
+    }
+
+    private static func playBundledStop() {
+        DispatchQueue.main.async {
+            guard let url = bundledSoundURL(filename: "custom-stop") else {
+                NSLog("[SoundFeedback] custom-stop not found, falling back to synthesized stop")
+                play(spec: stopSpec)
+                return
+            }
+            do {
+                let player = try preparedPlayer(forURL: url, label: "custom-stop")
+                player.stop()
+                player.currentTime = 0
+                player.volume = 0.5
+                _ = player.play()
+                NSLog("[SoundFeedback] custom-stop played OK")
+            } catch {
+                NSLog("[SoundFeedback] custom-stop play failed: %@", String(describing: error))
+                play(spec: stopSpec)
             }
         }
     }
@@ -271,7 +312,7 @@ enum SoundFeedback {
 
     private static func soundFileURL(for spec: ToneSpec) throws -> URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Type4Me", isDirectory: true)
+            .appendingPathComponent("VoiceInput", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("sound-\(spec.label).wav")
         if !FileManager.default.fileExists(atPath: url.path) {

@@ -1,6 +1,16 @@
 import AppKit
 import os
 
+/// Thread-safe state for buffering audio chunks while ASR connects.
+/// Used with `OSAllocatedUnfairLock` — accessed from the audio callback thread
+/// and the actor after connect completes.
+private struct ChunkBufferState: Sendable {
+    var pending: [Data] = []
+    /// Once set, the audio callback sends chunks directly through the pipeline
+    /// instead of buffering.
+    var continuation: AsyncStream<Data>.Continuation?
+}
+
 actor RecognitionSession {
 
     // MARK: - State
@@ -88,6 +98,13 @@ actor RecognitionSession {
 
     private var promptContext: PromptContext = PromptContext(selectedText: "", clipboardText: "")
 
+    /// When true, append newline after injecting text (gamepad hold mode).
+    private(set) var appendNewlineOnInject = false
+
+    func setAppendNewline(_ value: Bool) {
+        appendNewlineOnInject = value
+    }
+
     // MARK: - Speculative LLM (fire during recording pauses)
 
     private var speculativeLLMTask: Task<String?, Never>?
@@ -110,6 +127,8 @@ actor RecognitionSession {
     // MARK: - Start
 
     func startRecording(mode: ProcessingMode = .direct) async {
+        let recordingT0 = CFAbsoluteTimeGetCurrent()
+
         if state != .idle {
             NSLog("[Session] startRecording: forcing reset from state=%@", String(describing: state))
             DebugFileLogger.log("session forcing reset from state=\(state)")
@@ -199,41 +218,23 @@ actor RecognitionSession {
         // Capture prompt context (selected text + clipboard) before connect(),
         // because cloud ASR connect involves network round-trips that can take
         // hundreds of milliseconds, by which time the user's selection may be gone.
+        let captureT0 = CFAbsoluteTimeGetCurrent()
         promptContext = await PromptContext.capture()
-
-        do {
-            try await client.connect(config: config, options: requestOptions)
-            NSLog(
-                "[Session] ASR connected OK (streaming, hotwords=%d, history=%d)",
-                hotwords.count,
-                requestOptions.contextHistoryLength
-            )
-            DebugFileLogger.log("ASR connected OK")
-        } catch {
-            NSLog("[Session] ASR connect FAILED: %@", String(describing: error))
-            DebugFileLogger.log("ASR connect failed: \(String(describing: error))")
-            SoundFeedback.playError()
-            await client.disconnect()
-            self.asrClient = nil
-            state = .idle
-            onASREvent?(.error(error))
-            onASREvent?(.completed)
-            return
-        }
+        let captureMs = Int((CFAbsoluteTimeGetCurrent() - captureT0) * 1000)
+        DebugFileLogger.log("[PERF] PromptContext.capture: \(captureMs)ms")
 
         // Reset text state
         currentTranscript = .empty
         await finishAudioChunkPipeline(timeout: .milliseconds(100))
 
-        // Start ASR event consumption
-        let events = await client.events
-        eventConsumptionTask = Task { [weak self] in
-            for await event in events {
-                guard let self else { break }
-                await self.handleASREvent(event)
-                if case .completed = event { break }
-            }
-        }
+        // --- Parallel: start audio immediately, connect ASR in background ---
+        // Audio chunks arriving before ASR connects are buffered in a lock-protected
+        // array, then flushed once the connection is established.
+
+        // Thread-safe buffer for audio chunks during ASR connect.
+        // The lock is accessed from the audio callback thread (non-actor) and
+        // the actor itself after connect completes.
+        let chunkBuffer = OSAllocatedUnfairLock(initialState: ChunkBufferState())
 
         // Wire audio level → UI
         let levelHandler = self.onAudioLevel
@@ -241,24 +242,38 @@ actor RecognitionSession {
             levelHandler?(level)
         }
 
-        // Wire audio callback → ASR
-        let chunkContinuation = setupAudioChunkPipeline()
+        // Wire audio callback → buffer (will switch to direct send after connect)
         var chunkCount = 0
+        let chunkT0 = recordingT0  // capture start time for first-chunk latency
         audioEngine.onAudioChunk = { [weak self] data in
             guard let self else { return }
             chunkCount += 1
             if chunkCount == 1 {
+                let firstChunkMs = Int((CFAbsoluteTimeGetCurrent() - chunkT0) * 1000)
+                DebugFileLogger.log("[PERF] first audio chunk latency (from startRecording): \(firstChunkMs)ms")
                 NSLog("[Session] First audio chunk: %d bytes", data.count)
                 DebugFileLogger.log("first audio chunk bytes=\(data.count)")
                 Task {
                     await self.markReadyIfNeeded()
                 }
             }
-            chunkContinuation.yield(data)
+            chunkBuffer.withLock { state in
+                if let cont = state.continuation {
+                    // ASR connected: send directly
+                    cont.yield(data)
+                } else {
+                    // ASR still connecting: buffer
+                    state.pending.append(data)
+                }
+            }
         }
 
+        // Start audio engine immediately (user can start speaking)
         do {
+            let engineT0 = CFAbsoluteTimeGetCurrent()
             try audioEngine.start()
+            let engineMs = Int((CFAbsoluteTimeGetCurrent() - engineT0) * 1000)
+            DebugFileLogger.log("[PERF] audioEngine.start: \(engineMs)ms")
             NSLog("[Session] Audio engine started OK")
             DebugFileLogger.log("audio engine started OK")
         } catch {
@@ -273,7 +288,67 @@ actor RecognitionSession {
             return
         }
 
+        // Audio is running — enter recording state so user sees immediate feedback
         state = .recording
+
+        // Connect ASR (the slow part, ~800ms for cloud providers)
+        do {
+            let connectT0 = CFAbsoluteTimeGetCurrent()
+            try await client.connect(config: config, options: requestOptions)
+            let connectMs = Int((CFAbsoluteTimeGetCurrent() - connectT0) * 1000)
+            DebugFileLogger.log("[PERF] ASR connect: \(connectMs)ms")
+            NSLog(
+                "[Session] ASR connected OK (streaming, hotwords=%d, history=%d)",
+                hotwords.count,
+                requestOptions.contextHistoryLength
+            )
+            DebugFileLogger.log("ASR connected OK")
+        } catch {
+            NSLog("[Session] ASR connect FAILED: %@", String(describing: error))
+            DebugFileLogger.log("ASR connect failed: \(String(describing: error))")
+            SoundFeedback.playError()
+            // Stop audio engine since ASR failed
+            audioEngine.stop()
+            audioEngine.onAudioChunk = nil
+            audioEngine.onAudioLevel = nil
+            await client.disconnect()
+            self.asrClient = nil
+            state = .idle
+            onASREvent?(.error(error))
+            onASREvent?(.completed)
+            return
+        }
+
+        // Start ASR event consumption
+        let events = await client.events
+        eventConsumptionTask = Task { [weak self] in
+            for await event in events {
+                guard let self else { break }
+                await self.handleASREvent(event)
+                if case .completed = event { break }
+            }
+        }
+
+        // Set up the chunk pipeline and flush buffered audio
+        let chunkContinuation = setupAudioChunkPipeline()
+
+        // Atomically: flush all buffered chunks and switch callback to direct mode
+        let bufferedChunks = chunkBuffer.withLock { state -> [Data] in
+            state.continuation = chunkContinuation
+            let pending = state.pending
+            state.pending = []
+            return pending
+        }
+        let bufferedCount = bufferedChunks.count
+        for chunk in bufferedChunks {
+            chunkContinuation.yield(chunk)
+        }
+        if bufferedCount > 0 {
+            DebugFileLogger.log("[PERF] flushed \(bufferedCount) buffered audio chunks to ASR")
+        }
+
+        let totalRecordingSetupMs = Int((CFAbsoluteTimeGetCurrent() - recordingT0) * 1000)
+        DebugFileLogger.log("[PERF] total startRecording setup: \(totalRecordingSetupMs)ms")
         DebugFileLogger.log("session entered recording state, waiting for first audio chunk")
 
         // Lower system volume during recording if enabled
@@ -489,7 +564,23 @@ actor RecognitionSession {
 
             DebugFileLogger.log("stop: injecting +\(ContinuousClock.now - stopT0)")
             state = .injecting
+            let shouldPressEnter = appendNewlineOnInject
+            appendNewlineOnInject = false
             let injectionOutcome = injectionEngine.inject(finalText)
+            if shouldPressEnter && injectionOutcome == .inserted {
+                // Small delay to let Cmd+V complete, then press Return
+                Thread.sleep(forTimeInterval: 0.2)
+                let src = CGEventSource(stateID: .privateState)
+                if let down = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true),
+                   let up = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false) {
+                    // Clear all modifier flags to prevent Cmd/Ctrl+Return
+                    down.flags = []
+                    up.flags = []
+                    down.post(tap: .cgSessionEventTap)
+                    up.post(tap: .cgSessionEventTap)
+                    DebugFileLogger.log("stop: pressed Return key after inject")
+                }
+            }
             injectionEngine.copyToClipboard(finalText)
             onASREvent?(.finalized(text: finalText, injection: injectionOutcome))
 

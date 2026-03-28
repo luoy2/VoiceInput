@@ -8,7 +8,7 @@ struct AboutTab: View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsSectionHeader(
                 label: "ABOUT",
-                title: L("关于 Type4Me", "About Type4Me"),
+                title: L("关于 VoiceInput", "About VoiceInput"),
                 description: L("语音，流畅输入。基于火山引擎大模型语音识别的 macOS 原生输入工具。", "Voice to text, seamlessly. A native macOS input tool powered by large-model ASR.")
             )
 

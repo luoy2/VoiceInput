@@ -367,4 +367,5 @@ extension Notification.Name {
     static let hotkeyRecordingDidEnd = Notification.Name("Type4MeHotkeyRecordingDidEnd")
     static let navigateToMode = Notification.Name("Type4MeNavigateToMode")
     static let selectMode = Notification.Name("Type4MeSelectMode")
+    static let gamepadConfigDidChange = Notification.Name("Type4MeGamepadConfigDidChange")
 }

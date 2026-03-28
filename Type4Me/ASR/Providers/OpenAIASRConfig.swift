@@ -4,26 +4,31 @@ struct OpenAIASRConfig: ASRProviderConfig, Sendable {
 
     static let provider = ASRProvider.openai
     static let displayName = "OpenAI Whisper"
+    static let defaultEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+    static let defaultModel = "whisper-large-v3-turbo"
 
     static let credentialFields: [CredentialField] = [
-        CredentialField(key: "apiKey", label: "API Key", placeholder: "sk-...", isSecure: true, isOptional: false, defaultValue: ""),
-        CredentialField(key: "baseURL", label: "Base URL", placeholder: "https://api.openai.com/v1", isSecure: false, isOptional: true, defaultValue: "https://api.openai.com/v1"),
+        CredentialField(key: "endpoint", label: "Endpoint URL", placeholder: defaultEndpoint, isSecure: false, isOptional: false, defaultValue: defaultEndpoint),
+        CredentialField(key: "model", label: "Model", placeholder: defaultModel, isSecure: false, isOptional: false, defaultValue: defaultModel),
+        CredentialField(key: "apiKey", label: "API Key", placeholder: "sk-... (optional for local)", isSecure: true, isOptional: true, defaultValue: ""),
     ]
 
+    let endpoint: String
+    let model: String
     let apiKey: String
-    let baseURL: String
 
     init?(credentials: [String: String]) {
-        guard let key = credentials["apiKey"], !key.isEmpty else { return nil }
-        self.apiKey = key
-        self.baseURL = credentials["baseURL"]?.isEmpty == false
-            ? credentials["baseURL"]!
-            : "https://api.openai.com/v1"
+        let endpoint = credentials["endpoint"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = credentials["model"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        self.endpoint = endpoint?.isEmpty == false ? endpoint! : Self.defaultEndpoint
+        self.model = model?.isEmpty == false ? model! : Self.defaultModel
+        self.apiKey = credentials["apiKey"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     func toCredentials() -> [String: String] {
-        ["apiKey": apiKey, "baseURL": baseURL]
+        ["endpoint": endpoint, "model": model, "apiKey": apiKey]
     }
 
-    var isValid: Bool { !apiKey.isEmpty }
+    var isValid: Bool { !endpoint.isEmpty && !model.isEmpty }
 }

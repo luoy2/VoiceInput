@@ -2,28 +2,29 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_PATH="${APP_PATH:-/Applications/Type4Me.app}"
-APP_NAME="Type4Me"
+APP_PATH="${APP_PATH:-/Applications/VoiceInput.app}"
+APP_NAME="VoiceInput"
 APP_EXECUTABLE="Type4Me"
 APP_ICON_NAME="AppIcon"
-APP_BUNDLE_ID="${APP_BUNDLE_ID:-com.type4me.app}"
+APP_BUNDLE_ID="${APP_BUNDLE_ID:-com.yluo.voiceinput}"
 APP_VERSION="${APP_VERSION:-1.2.0}"
 APP_BUILD="${APP_BUILD:-1}"
 MIN_SYSTEM_VERSION="${MIN_SYSTEM_VERSION:-14.0}"
-MICROPHONE_USAGE_DESCRIPTION="${MICROPHONE_USAGE_DESCRIPTION:-Type4Me 需要访问麦克风以录制语音并将其转换为文本。}"
-APPLE_EVENTS_USAGE_DESCRIPTION="${APPLE_EVENTS_USAGE_DESCRIPTION:-Type4Me 需要辅助功能权限来注入转写文字到其他应用}"
+MICROPHONE_USAGE_DESCRIPTION="${MICROPHONE_USAGE_DESCRIPTION:-VoiceInput 需要访问麦克风以录制语音并将其转换为文本。}"
+APPLE_EVENTS_USAGE_DESCRIPTION="${APPLE_EVENTS_USAGE_DESCRIPTION:-VoiceInput 需要辅助功能权限来注入转写文字到其他应用}"
 LAUNCH_APP="${LAUNCH_APP:-1}"
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     SIGNING_IDENTITY="$CODESIGN_IDENTITY"
-elif security find-identity -v -p codesigning 2>/dev/null | grep -q "Type4Me Dev"; then
-    SIGNING_IDENTITY="Type4Me Dev"
 else
-    SIGNING_IDENTITY="-"
+    SIGNING_IDENTITY="Apple Development: 410328235@qq.com (7W2923DT75)"
 fi
 
 echo "Building universal release (arm64 + x86_64)..."
-swift build -c release --package-path "$PROJECT_DIR" --arch arm64 --arch x86_64 2>&1 | grep -E "Build complete|Build succeeded|error:|warning:" || true
+if ! swift build -c release --package-path "$PROJECT_DIR" --arch arm64 --arch x86_64 2>&1 | grep -E "Build complete|Build succeeded|error:|warning:"; then
+    echo "Universal build failed, falling back to single-arch build..."
+    swift build -c release --package-path "$PROJECT_DIR" 2>&1 | grep -E "Build complete|Build succeeded|error:|warning:" || true
+fi
 
 if [ -f "$PROJECT_DIR/.build/apple/Products/Release/Type4Me" ]; then
     BINARY="$PROJECT_DIR/.build/apple/Products/Release/Type4Me"
@@ -38,7 +39,7 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 
-echo "Stopping Type4Me..."
+echo "Stopping VoiceInput..."
 osascript -e "quit app \"$APP_NAME\"" 2>/dev/null || true
 sleep 1
 
@@ -84,6 +85,11 @@ cat >"$INFO_PLIST" <<EOF
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
 </dict>
 </plist>
 EOF

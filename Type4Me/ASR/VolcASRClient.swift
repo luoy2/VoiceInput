@@ -54,9 +54,8 @@ actor VolcASRClient: SpeechRecognizer {
         let connectId = UUID().uuidString
 
         var request = URLRequest(url: Self.endpoint)
-        request.setValue(volcConfig.appKey, forHTTPHeaderField: "X-Api-App-Key")
-        request.setValue(volcConfig.accessKey, forHTTPHeaderField: "X-Api-Access-Key")
-        request.setValue(volcConfig.resourceId, forHTTPHeaderField: "X-Api-Resource-Id")
+        request.setValue(volcConfig.accessKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("volc.seedasr.sauc.duration", forHTTPHeaderField: "X-Api-Resource-Id")
         request.setValue(connectId, forHTTPHeaderField: "X-Api-Connect-Id")
 
         let session = URLSession(configuration: .default)
@@ -65,7 +64,10 @@ actor VolcASRClient: SpeechRecognizer {
         self.webSocketTask = task
 
         // Send full_client_request (no compression, plain JSON)
-        let payload = VolcProtocol.buildClientRequest(uid: volcConfig.uid, options: options)
+        let payload = VolcProtocol.buildClientRequest(
+            uid: volcConfig.uid,
+            options: options
+        )
 
         let header = VolcHeader(
             messageType: .fullClientRequest,
@@ -78,7 +80,7 @@ actor VolcASRClient: SpeechRecognizer {
         lastTranscript = .empty
         audioPacketCount = 0
         totalAudioBytes = 0
-        NSLog("[ASR] Sending full_client_request (%d bytes), connectId=%@", message.count, connectId)
+        NSLog("[ASR] Sending full_client_request (%d bytes)", message.count)
         try await task.send(.data(message))
 
         NSLog("[ASR] full_client_request sent OK")
@@ -167,19 +169,39 @@ actor VolcASRClient: SpeechRecognizer {
             let headerByte1 = data.count > 1 ? data[1] : 0
             let msgType = (headerByte1 >> 4) & 0x0F
 
-            // Server error (0xF): could be a real error or just
-            // bigmodel_async's "session complete" signal.
+            // Server error (0xF)
             if msgType == 0x0F {
-                if audioPacketCount == 0 {
-                    // No audio was sent yet — this is a real setup/auth error.
-                    do {
-                        _ = try VolcProtocol.decodeServerResponse(data)
-                    } catch {
-                        NSLog("[ASR] Server error: %@", String(describing: error))
-                        emitEvent(.error(error))
+                // Always try to decode and log the error
+                // Log raw error data for debugging
+                let hexDump = data.prefix(200).map { String(format: "%02x", $0) }.joined(separator: " ")
+                DebugFileLogger.log("ASR server error raw (\(data.count) bytes): \(hexDump)")
+                // Try to decompress if gzipped, then decode
+                let errorPayload: Data
+                if data.count > 8 {
+                    let headerSize = Int(data[0] & 0x0F) * 4
+                    let compress = Int(data[2]) & 0x0F
+                    var offset = headerSize
+                    let flags = Int(data[1]) & 0x0F
+                    if flags == 1 || flags == 3 { offset += 4 }
+                    if data.count > offset + 4 {
+                        let pSize = Int(UInt32(bigEndian: data[offset..<offset+4].withUnsafeBytes { $0.load(as: UInt32.self) }))
+                        let pData = data[(offset+4)..<min(offset+4+pSize, data.count)]
+                        if compress == 1, let decompressed = try? VolcProtocol.gzipDecompress(Data(pData)) {
+                            errorPayload = decompressed
+                        } else {
+                            errorPayload = Data(pData)
+                        }
+                        if let errorStr = String(data: errorPayload, encoding: .utf8) {
+                            DebugFileLogger.log("ASR server error decoded: \(errorStr)")
+                        }
                     }
-                } else {
-                    NSLog("[ASR] Session ended by server after %d audio packets", audioPacketCount)
+                }
+                do {
+                    _ = try VolcProtocol.decodeServerResponse(data)
+                } catch {
+                    NSLog("[ASR] Server error parse (packets=%d): %@", audioPacketCount, String(describing: error))
+                    DebugFileLogger.log("ASR server error (packets=\(audioPacketCount)): \(String(describing: error))")
+                    emitEvent(.error(error))
                 }
                 emitEvent(.completed)
                 webSocketTask?.cancel(with: .normalClosure, reason: nil)
