@@ -45,6 +45,7 @@ enum GamepadButton: Int, CaseIterable {
 
 /// Monitors a connected game controller globally via IOKit HID.
 /// Works regardless of app focus (unlike GCController).
+/// Supports both standard HID button page (8BitDo) and raw report parsing (Pro Controller).
 class GamepadMonitor {
     var onHoldStart: (() -> Void)?
     var onHoldEnd: (() -> Void)?
@@ -63,6 +64,9 @@ class GamepadMonitor {
     private var captureMode = false
 
     private var hidManager: IOHIDManager?
+    private var reportBufferPtr: UnsafeMutablePointer<UInt8>?
+    private var lastRawButtons: [GamepadButton: Bool] = [:]
+    private var usesStandardButtons = false
 
     init(holdButton: GamepadButton = .a, toggleButton: GamepadButton = .none, sendButton: GamepadButton = .b) {
         self.holdButton = holdButton
@@ -91,6 +95,7 @@ class GamepadMonitor {
             let name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "unknown"
             try? "HID Gamepad connected: \(name)\n".appendToFile("/tmp/voiceinput-debug.log")
             monitor.isConnected = true
+            monitor.registerRawReportCallback(for: device)
             DispatchQueue.main.async { monitor.onConnectionChanged?(true) }
         }, refSelf)
 
@@ -102,10 +107,11 @@ class GamepadMonitor {
             monitor.holdButtonDown = false
             monitor.toggleButtonDown = false
             monitor.sendButtonDown = false
+            monitor.lastRawButtons.removeAll()
             DispatchQueue.main.async { monitor.onConnectionChanged?(false) }
         }, refSelf)
 
-        // Input value callback for button events
+        // Input value callback for standard HID button page (e.g. 8BitDo)
         IOHIDManagerRegisterInputValueCallback(manager, { context, _, _, value in
             guard let context else { return }
             let monitor = Unmanaged<GamepadMonitor>.fromOpaque(context).takeUnretainedValue()
@@ -144,7 +150,54 @@ class GamepadMonitor {
         onButtonCaptured = nil
     }
 
-    // MARK: - HID Input Handling
+    // MARK: - Raw Report Callback (for Pro Controller etc.)
+
+    private func registerRawReportCallback(for device: IOHIDDevice) {
+        let bufferSize = 512
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        reportBufferPtr = buffer
+
+        let refSelf = Unmanaged.passUnretained(self).toOpaque()
+        IOHIDDeviceRegisterInputReportCallback(device, buffer, bufferSize, { context, _, _, _, reportID, report, reportLength in
+            guard let context else { return }
+            let monitor = Unmanaged<GamepadMonitor>.fromOpaque(context).takeUnretainedValue()
+            // Skip if this controller uses standard button page
+            guard !monitor.usesStandardButtons else { return }
+            monitor.handleRawReport(reportID: reportID, report: report, length: Int(reportLength))
+        }, refSelf)
+    }
+
+    /// Parse raw input report for Nintendo Pro Controller (report ID 0x30)
+    /// Report layout (after report ID byte):
+    ///   [0] timer  [1] battery  [2] buttons1  [3] buttons2  [4] buttons3  [5-10] sticks  [11+] IMU
+    /// buttons1: Y=0x01 X=0x02 B=0x04 A=0x08 SR_R=0x10 SL_R=0x20 R=0x40 ZR=0x80
+    /// buttons2: Minus=0x01 Plus=0x02 RStick=0x04 LStick=0x08 Home=0x10 Capture=0x20
+    /// buttons3: Down=0x01 Up=0x02 Right=0x04 Left=0x08 SR_L=0x10 SL_L=0x20 L=0x40 ZL=0x80
+    private func handleRawReport(reportID: UInt32, report: UnsafeMutablePointer<UInt8>, length: Int) {
+        guard reportID == 0x30, length >= 5 else { return }
+
+        let btn1 = report[2]
+        let btn3 = report[4]
+
+        let buttonStates: [(GamepadButton, Bool)] = [
+            (.a, btn1 & 0x08 != 0),
+            (.b, btn1 & 0x04 != 0),
+            (.x, btn1 & 0x02 != 0),
+            (.y, btn1 & 0x01 != 0),
+            (.leftShoulder, btn3 & 0x40 != 0),
+            (.rightShoulder, btn1 & 0x40 != 0),
+        ]
+
+        for (button, pressed) in buttonStates {
+            let wasPressed = lastRawButtons[button] ?? false
+            if pressed != wasPressed {
+                lastRawButtons[button] = pressed
+                handleButtonStateChange(button: button, pressed: pressed)
+            }
+        }
+    }
+
+    // MARK: - Standard HID Button Page Handling (8BitDo etc.)
 
     private func handleHIDValue(_ value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
@@ -155,24 +208,33 @@ class GamepadMonitor {
         // Only care about Button page (0x09)
         guard usagePage == Int(kHIDPage_Button) else { return }
 
-        let pressed = intValue != 0
+        // Mark that this controller uses standard buttons, skip raw report parsing
+        usesStandardButtons = true
 
-        // Capture mode: any button press captures it
-        if captureMode && pressed {
-            if let button = GamepadButton.fromHIDUsage(usage) {
-                try? "HID capture: usage=\(usage) → \(button.displayName)\n".appendToFile("/tmp/voiceinput-debug.log")
-                DispatchQueue.main.async { [self] in
-                    onButtonCaptured?(button)
-                    captureMode = false
-                }
-            } else {
+        let pressed = intValue != 0
+        guard let button = GamepadButton.fromHIDUsage(usage) else {
+            // Capture mode: accept any button press even if not in our mapping
+            if captureMode && pressed {
                 try? "HID capture: unknown usage=\(usage) pressed\n".appendToFile("/tmp/voiceinput-debug.log")
             }
             return
         }
 
-        // Normal mode: check if this is one of our buttons
-        guard let button = GamepadButton.fromHIDUsage(usage) else { return }
+        handleButtonStateChange(button: button, pressed: pressed)
+    }
+
+    // MARK: - Shared Button Logic
+
+    private func handleButtonStateChange(button: GamepadButton, pressed: Bool) {
+        // Capture mode: any button press captures it
+        if captureMode && pressed {
+            try? "Capture: \(button.displayName)\n".appendToFile("/tmp/voiceinput-debug.log")
+            DispatchQueue.main.async { [self] in
+                onButtonCaptured?(button)
+                captureMode = false
+            }
+            return
+        }
 
         if button == holdButton && holdButton != .none {
             DispatchQueue.main.async { [self] in
@@ -209,5 +271,6 @@ class GamepadMonitor {
         if let manager = hidManager {
             IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         }
+        reportBufferPtr?.deallocate()
     }
 }
